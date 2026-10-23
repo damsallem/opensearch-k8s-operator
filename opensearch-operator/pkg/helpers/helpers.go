@@ -47,23 +47,56 @@ func GetField(v *appsv1.StatefulSetSpec, field string) interface{} {
 	return f
 }
 
+// START backport #1551 (upstream v3.0.0)
+// RemoveIt drops every entry identified by ss.Component+ss.Description from ssSlice.
+// Status is deliberately not part of the match: the caller's "remove" value is usually
+// a status snapshot taken at the start of the reconcile, which can be stale by the time
+// this runs against a freshly-read object (informer cache lag, or a RetryOnConflict
+// re-run). Matching on Status as well as identity would then miss the (already-updated)
+// entry and leave the write to append a duplicate. Since callers key one status entry per
+// component+description, keying removal on that identity alone also self-heals any
+// duplicates already present.
 func RemoveIt(ss opsterv1.ComponentStatus, ssSlice []opsterv1.ComponentStatus) []opsterv1.ComponentStatus {
-	for idx, v := range ssSlice {
-		if ComponentStatusEqual(v, ss) {
-			return append(ssSlice[0:idx], ssSlice[idx+1:]...)
+	out := ssSlice[:0:0]
+	for _, v := range ssSlice {
+		if ComponentIdentityEqual(v, ss) {
+			continue
 		}
+		out = append(out, v)
 	}
-	return ssSlice
+	return out
 }
+
+// END backport #1551
 func Replace(remove opsterv1.ComponentStatus, add opsterv1.ComponentStatus, ssSlice []opsterv1.ComponentStatus) []opsterv1.ComponentStatus {
 	removedSlice := RemoveIt(remove, ssSlice)
 	fullSliced := append(removedSlice, add)
 	return fullSliced
 }
 
-func ComponentStatusEqual(left opsterv1.ComponentStatus, right opsterv1.ComponentStatus) bool {
-	return left.Component == right.Component && left.Description == right.Description && left.Status == right.Status
+// START backport #1551 (upstream v3.0.0)
+// ComponentIdentityEqual reports whether left and right refer to the same componentsStatus
+// entry (Component+Description), regardless of Status.
+func ComponentIdentityEqual(left opsterv1.ComponentStatus, right opsterv1.ComponentStatus) bool {
+	return left.Component == right.Component && left.Description == right.Description
 }
+
+// END backport #1551
+
+// START backport #1473 (upstream v3.0.0)
+// ClearUpgraderComponentStatuses removes all Upgrader entries from componentsStatus,
+// including entries for node pools that no longer exist in the spec.
+func ClearUpgraderComponentStatuses(statuses []opsterv1.ComponentStatus) []opsterv1.ComponentStatus {
+	result := make([]opsterv1.ComponentStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if status.Component != "Upgrader" {
+			result = append(result, status)
+		}
+	}
+	return result
+}
+
+// END backport #1473
 
 func FindFirstPartial(
 	arr []opsterv1.ComponentStatus,
